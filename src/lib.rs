@@ -90,11 +90,13 @@ impl UART
     /* centralize reading and writing of registers to these unsafe functions */
     fn write_reg(&self, reg: usize, val: u8)
     {
+        /* assumes reg is in range */
         unsafe { write_volatile((self.base_addr + reg) as *mut u8, val) }
     }
 
     fn read_reg(&self, reg: usize) -> u8
     {
+        /* assumes reg is in range */
         unsafe { read_volatile((self.base_addr + reg) as *const u8) }
     }
 
