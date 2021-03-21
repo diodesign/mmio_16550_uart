@@ -13,7 +13,7 @@
 
 use core::ptr::{write_volatile, read_volatile};
 
-const REG_TOTAL_SIZE: usize = 8;        /* 8 byte registers */
+const REG_TOTAL_SIZE: usize = 8;        /* 8 byte-size registers */
 
 /* registers 0-7 in the 16550 */
 const REG_DATA: usize = 0;              /* byte to transmit or receive */
@@ -41,6 +41,7 @@ const LOOP_MAX: usize = 1000;
 #[derive(Debug)]
 pub enum Fault
 {
+    SizeTooSmall,    /* the size of the MMIO area is unexpectedly small */
     TxNotEmpty,     /* gave up waiting to transmit */
     DataNotReady    /* gave up waiting to send */
 }
@@ -55,8 +56,11 @@ impl UART
 {
     /* create and initialize a standard 8-n-1 UART object, or fail with a reason code.
     TODO: Configure this initialization */
-    pub fn new(base_addr: usize) -> Result<Self, Fault>
+    pub fn new(base_addr: usize, size: usize) -> Result<Self, Fault>
     {
+        /* give up if the available MMIO area is smaller than the register area we need */
+        if REG_TOTAL_SIZE > size { return Err(Fault::SizeTooSmall) }
+
         let uart = UART { base_addr };
 
         /* disable IRQs from this chip */
@@ -90,38 +94,39 @@ impl UART
     /* centralize reading and writing of registers to these unsafe functions */
     fn write_reg(&self, reg: usize, val: u8)
     {
-        /* assumes reg is in range */
+        /* assumes reg is within MMIO area's range */
         unsafe { write_volatile((self.base_addr + reg) as *mut u8, val) }
     }
 
     fn read_reg(&self, reg: usize) -> u8
     {
-        /* assumes reg is in range */
+        /* assumes reg is within MMIO area's range */
         unsafe { read_volatile((self.base_addr + reg) as *const u8) }
     }
-
+    
     pub fn send_byte(&self, to_send: u8) -> Result<(), Fault>
     {
-        for _ in 0..LOOP_MAX
+        let mut result = Err(Fault::TxNotEmpty);
+        let mut attempts_remaining = LOOP_MAX;
+
+        while attempts_remaining > 0
         {
-            if self.is_transmit_empty() == true
+            self.is_transmit_empty().then(||
             {
                 self.write_reg(REG_DATA, to_send);
-                return Ok(());
-            }
+                result = Ok(());
+                attempts_remaining = 0;
+            });
         }
 
-        Err(Fault::TxNotEmpty)
+        result
     }
 
     pub fn read_byte(&self) -> Result<u8, Fault>
     {
-        for _ in 0..LOOP_MAX
+        if self.is_data_ready()
         {
-            if self.is_data_ready() == true
-            {
-                return Ok(self.read_reg(REG_DATA));
-            }   
+            return Ok(self.read_reg(REG_DATA))
         }
 
         Err(Fault::DataNotReady)
